@@ -1,13 +1,20 @@
 version: 2
 updates:
+  # Для библиотеки с абстрактными зависимостями поднимать нижние границы вредно:
+  # это отрезает пользователей, у которых код прекрасно работает. В частности,
+  # проект намеренно поддерживает и mcp 1.x, и 2.x. Стратегия widen расширяет
+  # диапазон там, где это осмысленно, и не трогает открытые сверху `>=X`.
+  # Алерты безопасности при этом продолжают приходить.
   - package-ecosystem: pip
     directory: /
+    versioning-strategy: widen
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
 
+  # Версии actions, наоборот, стоит держать свежими: они пиннятся жёстко.
   - package-ecosystem: github-actions
     directory: /
     schedule:
