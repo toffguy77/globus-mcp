@@ -1,0 +1,40 @@
+name: Идея
+description: Предложить новый инструмент или улучшение
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Напоминание: оформление заказа и оплата не реализуются намеренно,
+        как и обход блокировок или антибот-защиты сайта.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу это решает
+      description: Сценарий из жизни, а не формулировка решения.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Как это могло бы работать
+      description: Имя инструмента, аргументы, что возвращает.
+    validations:
+      required: true
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Известен ли эндпоинт
+      description: |
+        Если разведали запрос в DevTools — приложите метод, путь и тело.
+        Это сильно ускоряет реализацию. Уберите из примера свой токен.
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Участие
+      options:
+        - label: Готов прислать pull request

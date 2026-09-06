@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Инструменты
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Состояние сессии globus-mcp (в нём лежит JWT — никогда не коммитить)
+.globus-mcp/
+state.json
+
+# Редакторы и ОС
+.DS_Store
+.idea/
+.vscode/
+*.swp

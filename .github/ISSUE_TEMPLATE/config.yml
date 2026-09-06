@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость безопасности
+    url: https://github.com/toffguy77/globus-mcp/security/advisories/new
+    about: Не заводите публичный issue — сообщите приватно.
+  - name: Вопрос или идея для обсуждения
+    url: https://github.com/toffguy77/globus-mcp/discussions
+    about: Обсуждения — для вопросов и сырых идей.

@@ -1,0 +1,63 @@
+[project]
+name = "globus-mcp"
+version = "0.1.0"
+description = "MCP-сервер к интернет-магазину ГЛОБУС (online.globus.ru): поиск, каталог, карточки товаров, акции, корзина"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Dmitry Spasskiy", email = "toffguy77@gmail.com" }]
+keywords = ["mcp", "model-context-protocol", "globus", "grocery", "llm", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Russian",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/toffguy77/globus-mcp"
+Repository = "https://github.com/toffguy77/globus-mcp"
+Issues = "https://github.com/toffguy77/globus-mcp/issues"
+Changelog = "https://github.com/toffguy77/globus-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+globus-mcp = "globus_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["globus_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "RUF001",  # кириллица в строках — это язык проекта, не гомоглифы
+    "RUF002",
+    "RUF003",
+]

@@ -1,0 +1,73 @@
+name: Баг
+description: Что-то работает не так
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Не прикладывайте содержимое `~/.globus-mcp/state.json`** — в нём ваш JWT.
+        Уязвимости присылайте приватно, а не сюда.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Проверено до отправки
+      options:
+        - label: Я обращаюсь к сайту с российского IP (для зарубежных сайт закрыт)
+          required: true
+        - label: В тексте issue нет токенов, телефонов и других персональных данных
+          required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что происходит
+      description: Ожидаемое и фактическое поведение.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Как воспроизвести
+      description: Вызов инструмента с аргументами или сниппет на Python.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Текст ошибки
+      render: text
+
+  - type: input
+    id: python
+    attributes:
+      label: Версия Python
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: input
+    id: mcp
+    attributes:
+      label: Версия пакета mcp
+      description: "pip show mcp"
+      placeholder: "2.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия globus-mcp
+      placeholder: "0.1.0 или хеш коммита"
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP-клиент
+      placeholder: "Claude Desktop, Claude Code, другое"
