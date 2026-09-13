@@ -398,3 +398,132 @@ def test_checkout_info_requires_auth(fake_client, recorder):
     recorder.route("GET", bff("checkout"), {"errors": [{"message": "unauthorized"}]}, status=401)
     with pytest.raises(GlobusError):
         s.checkout_info()
+
+
+# ------------------------------------------------------------ избранное и история
+
+
+GROUPED_PRODUCTS = envelope({"products": {"groups": [
+    {"name": "Молочные продукты", "items": [
+        {"id": "1", "name_required": "Молоко", "price": 8999, "url": "/products/moloko/"},
+    ]},
+]}})
+
+
+def test_already_bought_flattens_groups(fake_client, recorder):
+    recorder.route("POST", bff("catalog/you-bought-set"), GROUPED_PRODUCTS)
+    out = s.already_bought()
+    body = recorder.body()
+    assert body["sort"] == "default"
+    assert body["pagination"] == {"per_page": 20, "page": 1}
+    assert out["items"] == [{"id": "1", "name": "Молоко", "price": 89.99,
+                             "url": "/products/moloko", "category": "Молочные продукты"}]
+
+
+def test_favorites_list_flattens_groups(fake_client, recorder):
+    recorder.route("POST", bff("catalog/favorite-products"), GROUPED_PRODUCTS)
+    out = s.favorites_list(per_page=150)
+    assert recorder.body()["pagination"]["per_page"] == 100
+    assert out["items"][0]["category"] == "Молочные продукты"
+
+
+def test_favorite_ids(fake_client, recorder):
+    recorder.route("GET", bff("catalog/favorite-id-products"), envelope({"id": ["1", "2"]}))
+    assert s.favorite_ids() == ["1", "2"]
+
+
+def test_favorite_ids_empty(fake_client, recorder):
+    recorder.route("GET", bff("catalog/favorite-id-products"), envelope({}))
+    assert s.favorite_ids() == []
+
+
+def test_favorites_set_adds(fake_client, recorder):
+    recorder.route("POST", bff("catalog/favorite-products:mass-add"), envelope(None))
+    out = s.favorites_set(["1", "2"])
+    assert recorder.body() == {"products": [
+        {"product_id": "1", "is_favorite": True},
+        {"product_id": "2", "is_favorite": True},
+    ]}
+    assert out == {"ok": True, "is_favorite": True, "product_ids": ["1", "2"]}
+
+
+def test_favorites_set_removes(fake_client, recorder):
+    recorder.route("POST", bff("catalog/favorite-products:mass-add"), envelope(None))
+    s.favorites_set(["1"], is_favorite=False)
+    assert recorder.body()["products"] == [{"product_id": "1", "is_favorite": False}]
+
+
+def test_order_history_groups_by_month(fake_client, recorder):
+    recorder.route("GET", bff("operation-history/operation-list"), envelope({
+        "grouping_data": [
+            {"month_name": "Сентябрь", "order_data": [
+                {"number": "11111111111", "order_date": "Доставка 11 сентября",
+                 "status": "Получен", "gm_name": "Глобус", "sum": 584408,
+                 "filter_date": "2026-09-10T20:25:52.000000Z"},
+            ], "gm_data": [
+                {"id": "5019_52_347_71_2026-06-12_18:26:27", "date": "2026-06-12T18:26:27+03:00",
+                 "gm_name": "Глобус Коммунарка", "sum": 12345},
+            ]},
+        ],
+    }))
+    out = s.order_history()
+    assert out["months"][0]["month"] == "Сентябрь"
+    order = out["months"][0]["orders"][0]
+    assert order["number"] == "11111111111"
+    assert order["status"] == "Получен"
+    assert order["sum"] == 5844.08
+    in_store = out["months"][0]["in_store"][0]
+    assert in_store["id"] == "5019_52_347_71_2026-06-12_18:26:27"
+    assert in_store["store"] == "Глобус Коммунарка"
+    assert in_store["sum"] == 123.45
+    assert out["next_cursor"] == "2026-06-12"
+
+
+def test_order_details_returns_status_and_items(fake_client, recorder):
+    recorder.route("GET", bff("operation-history/details-online/11111111111"), envelope({
+        "order_data": {
+            "status": "Получен", "status_text": "Спасибо, что выбрали нас",
+            "order_date": "10.09.2026, 23:25", "gm_name": "Глобус",
+            "delivery_cost": 12900, "service_charge_price": 7900,
+        },
+        "products": {"categories": [
+            {"category": {"name": "Овощи"}, "product_list": [
+                {"id": "1", "name_cut": "Укроп свежий Глобус,", "name_uncut": "50г",
+                 "total_product_quantity": "1 шт", "price_per": 4899, "total_price": 4899,
+                 "cost_total": 5999, "discount_flag": True,
+                 "url": "/products/ukrop-383495_ST/"},
+            ]},
+        ]},
+    }))
+    out = s.order_details("11111111111")
+    assert out["status"] == "Получен"
+    assert out["store"] == "Глобус"
+    assert out["delivery_cost"] == 129.0
+    assert out["service_charge"] == 79.0
+    item = out["items"][0]
+    assert item["name"] == "Укроп свежий Глобус, 50г"
+    assert item["price"] == 48.99
+    assert item["price_before_discount"] == 59.99
+    assert item["url"] == "/products/ukrop-383495_ST"
+
+
+def test_order_details_offline_purchase(fake_client, recorder):
+    order_id = "5019_52_347_71_2026-06-12_18:26:27"
+    recorder.route("GET", bff(f"operation-history/details-offline/{order_id}"), envelope({
+        "purchase_data": {"gm_name": "Глобус Коммунарка", "purchase_date": "12 июня 18:26"},
+        "payment_parameters": {"product_quantity": "2 товара",
+                               "cost_after_discount": 70295, "total_discount": -5000},
+        "product_departments": [
+            {"name": "Бакалея", "product_list": [
+                {"id": "1", "name_cut": "Геркулес Монастырский,", "name_uncut": "500г",
+                 "total_product_quantity": "1 шт", "price_per": 8999, "total_price": 8999,
+                 "total_cost": 8999, "discount_flag": False,
+                 "url": "/products/gerkules-monastyrskij-500g-1_ST/"},
+            ]},
+        ],
+    }))
+    out = s.order_details(order_id)
+    assert out["store"] == "Глобус Коммунарка"
+    assert out["sum"] == 702.95
+    assert out["discount"] == 50.0
+    assert out["items"][0]["name"] == "Геркулес Монастырский, 500г"

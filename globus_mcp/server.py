@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Literal
 
 try:  # mcp 1.x
@@ -101,6 +102,18 @@ def _slug(url_or_slug: str) -> str:
 # -------------------------------------------------------------- авторизация
 
 
+def _token_expiry(payload: dict[str, Any]) -> dict[str, Any]:
+    """Остаток времени жизни токена по claim'у exp. Подпись не проверяется —
+    payload декодируется только чтобы предупредить об истечении."""
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)):
+        return {}
+    left = exp - time.time()
+    if left <= 0:
+        return {"token_expired": True, "warning": "токен истёк, запросите новый (auth_set_token)"}
+    return {"token_expired": False, "token_expires_in_min": round(left / 60, 1)}
+
+
 @mcp.tool()
 def globus_status() -> dict[str, Any]:
     """Текущее состояние сессии: авторизован ли пользователь, какой магазин/способ
@@ -110,7 +123,7 @@ def globus_status() -> dict[str, Any]:
         ctx = (gc().get("context") or {}).get("context", {})
     except GlobusError as e:
         ctx = {"error": str(e)}
-    return {
+    out = {
         "authenticated": bool(payload.get("is_registered")),
         "phone": payload.get("phone_number"),
         "name": payload.get("given_name"),
@@ -126,6 +139,9 @@ def globus_status() -> dict[str, Any]:
             "pvz_id": ctx.get("pvz_id"),
         },
     }
+    if payload:
+        out.update(_token_expiry(payload))
+    return out
 
 
 @mcp.tool()
@@ -161,7 +177,9 @@ def auth_set_token(token: str) -> dict[str, Any]:
     не отработал."""
     gc().set_token(token.strip())
     payload = gc().token_payload() or {}
-    return {"ok": True, "phone": payload.get("phone_number"), "name": payload.get("given_name")}
+    out = {"ok": True, "phone": payload.get("phone_number"), "name": payload.get("given_name")}
+    out.update(_token_expiry(payload))
+    return out
 
 
 @mcp.tool()
@@ -209,6 +227,10 @@ def set_purchase_method(
     pickup_store — самовывоз из гипермаркета (нужен store_id из list_stores);
     delivery — доставка по адресу (нужен address_id из профиля);
     pvz — пункт выдачи (нужен pvz_id из list_pickup_points).
+
+    Для работы с корзиной (cart_view и другие cart_*) нужен именно "онлайн"-
+    контекст — delivery или pvz. При pickup_store запросы к корзине падают с
+    ошибкой "Online context required".
     """
     ctx: dict[str, Any]
     if method == "pickup_store":
@@ -477,6 +499,212 @@ def recommendations(
     return items
 
 
+# --------------------------------------------------------- избранное и история
+
+
+def _grouped_products(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Товары, сгруппированные по категориям (формат you-bought-set/favorite-products)."""
+    items = []
+    for group in (data.get("products") or {}).get("groups", []):
+        for p in group.get("items", []):
+            it = brief(p)
+            it["category"] = group.get("name")
+            items.append(it)
+    return items
+
+
+@mcp.tool()
+def already_bought(page: int = 1, per_page: int = 20, sort: str = "default") -> dict[str, Any]:
+    """Товары, которые пользователь уже покупал, сгруппированные по категориям.
+    Требует авторизации."""
+    if sort not in SORTS:
+        sort = "default"
+    data = gc().post(
+        "catalog/you-bought-set",
+        {
+            "sort": sort,
+            "include": ["products"],
+            "pagination": {"per_page": min(per_page, 100), "page": page},
+        },
+    ) or {}
+    return {"items": _grouped_products(data)}
+
+
+@mcp.tool()
+def favorites_list(page: int = 1, per_page: int = 20, sort: str = "default") -> dict[str, Any]:
+    """Список избранных товаров, сгруппированный по категориям. Требует авторизации."""
+    if sort not in SORTS:
+        sort = "default"
+    data = gc().post(
+        "catalog/favorite-products",
+        {"sort": sort, "pagination": {"per_page": min(per_page, 100), "page": page}},
+    ) or {}
+    return {"items": _grouped_products(data)}
+
+
+@mcp.tool()
+def favorite_ids() -> list[str]:
+    """Id всех избранных товаров — быстрая проверка, лежит ли товар в избранном.
+    Требует авторизации."""
+    data = gc().get("catalog/favorite-id-products") or {}
+    return list(data.get("id") or [])
+
+
+@mcp.tool()
+def favorites_set(product_ids: list[str], is_favorite: bool = True) -> dict[str, Any]:
+    """Добавить или убрать товары из избранного. product_ids — id товаров (поле
+    id из brief-карточки, например из favorites_list или search_products).
+    is_favorite=False убирает из избранного. Требует авторизации."""
+    gc().post(
+        "catalog/favorite-products:mass-add",
+        {"products": [{"product_id": pid, "is_favorite": is_favorite} for pid in product_ids]},
+    )
+    return {"ok": True, "is_favorite": is_favorite, "product_ids": product_ids}
+
+
+@mcp.tool()
+def order_history(last_operation_date: str | None = None) -> dict[str, Any]:
+    """История заказов, сгруппированная по месяцам. number — номер заказа для
+    order_details. Если в ответе load_more=true — есть более старые заказы:
+    возьми next_cursor из ответа и передай его следующим вызовом как
+    last_operation_date, чтобы получить более старую страницу. Требует
+    авторизации.
+
+    Помимо онлайн-заказов (orders) каждый месяц содержит покупки в гипермаркете
+    (in_store) — они приходят в том же ответе отдельным списком, без всякого
+    фильтра. Их id (вида "5019_52_347_71_2026-06-12_18:26:27") ведёт на страницу
+    сайта, но не подходит для order_details — состав такой покупки через API
+    получить не удалось.
+    """
+    params: dict[str, Any] = {}
+    if last_operation_date:
+        params["last_operation_date"] = last_operation_date
+    data = gc().get("operation-history/operation-list", **params) or {}
+    months = []
+    last_date = None
+    for month in data.get("grouping_data", []):
+        orders = [
+            {
+                "number": o.get("number"),
+                "date": o.get("order_date"),
+                "status": o.get("status"),
+                "store": o.get("gm_name"),
+                "sum": rub(o.get("sum")),
+            }
+            for o in month.get("order_data", [])
+        ]
+        in_store = [
+            {
+                "id": g.get("id"),
+                "date": g.get("date"),
+                "store": g.get("gm_name"),
+                "sum": rub(g.get("sum")),
+            }
+            for g in month.get("gm_data", [])
+        ]
+        months.append({
+            "month": month.get("month_name"),
+            "orders": orders,
+            "in_store": in_store,
+        })
+        for o in month.get("order_data", []):
+            fd = o.get("filter_date")
+            if fd:
+                last_date = fd[:10]
+        for g in month.get("gm_data", []):
+            gd = g.get("date")
+            if gd:
+                last_date = gd[:10]
+    return {
+        "months": months,
+        "load_more": (data.get("filter_data") or {}).get("load_more", False),
+        "next_cursor": last_date,
+    }
+
+
+def _order_item(p: dict[str, Any]) -> dict[str, Any]:
+    """Товар из состава заказа (operation-history/details-online) — другой набор
+    полей, чем в карточке каталога, поэтому не переиспользует brief()."""
+    name = " ".join(x for x in (p.get("name_cut"), p.get("name_uncut")) if x).strip()
+    out = {
+        "id": p.get("id"),
+        "name": name or None,
+        "quantity": p.get("total_product_quantity") or p.get("product_quantity"),
+        "price": rub(p.get("price_per")),
+        "sum": rub(p.get("total_price")),
+        "url": (p.get("url") or "").rstrip("/") or None,
+    }
+    if p.get("discount_flag"):
+        out["price_before_discount"] = rub(p.get("cost_total"))
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+def _offline_item(p: dict[str, Any]) -> dict[str, Any]:
+    """Товар из покупки в гипермаркете (operation-history/details-offline) —
+    третий, ещё немного другой набор полей, чем в details-online и в каталоге."""
+    name = " ".join(x for x in (p.get("name_cut"), p.get("name_uncut")) if x).strip()
+    out = {
+        "id": p.get("id"),
+        "name": name or None,
+        "quantity": p.get("total_product_quantity"),
+        "price": rub(p.get("price_per")),
+        "sum": rub(p.get("total_price")),
+        "url": (p.get("url") or "").rstrip("/") or None,
+    }
+    if p.get("discount_flag"):
+        out["price_before_discount"] = rub(p.get("total_cost"))
+    return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+@mcp.tool()
+def order_details(order_id: str) -> dict[str, Any]:
+    """Детали покупки по её id из order_history: статус/сумма, состав. Требует
+    авторизации.
+
+    order_id — либо номер онлайн-заказа (из order_history.months[].orders,
+    например "02039000541"), либо составной id покупки в гипермаркете (из
+    order_history.months[].in_store, например
+    "5019_52_347_71_2026-06-12_18:26:27") — тип определяется по наличию "_".
+    """
+    if "_" in order_id:
+        data = gc().get(f"operation-history/details-offline/{order_id}") or {}
+        purchase = data.get("purchase_data") or {}
+        payment = data.get("payment_parameters") or {}
+        products = [
+            _offline_item(p)
+            for dept in data.get("product_departments", [])
+            for p in dept.get("product_list", [])
+        ]
+        discount = payment.get("total_discount")
+        out = {
+            "store": purchase.get("gm_name"),
+            "purchase_date": purchase.get("purchase_date"),
+            "product_quantity": payment.get("product_quantity"),
+            "sum": rub(payment.get("cost_after_discount")),
+            "discount": rub(-discount) if discount else None,
+            "items": products,
+        }
+        return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+    data = gc().get(f"operation-history/details-online/{order_id}") or {}
+    order = data.get("order_data") or {}
+    products = [
+        _order_item(p)
+        for cat in (data.get("products") or {}).get("categories", [])
+        for p in cat.get("product_list", [])
+    ]
+    out = {
+        "status": order.get("status"),
+        "status_text": order.get("status_text"),
+        "order_date": order.get("order_date"),
+        "store": order.get("gm_name"),
+        "delivery_cost": rub(order.get("delivery_cost")),
+        "service_charge": rub(order.get("service_charge_price")),
+        "items": products,
+    }
+    return {k: v for k, v in out.items() if v not in (None, [], "")}
+
+
 # -------------------------------------------------------------------- корзина
 
 
@@ -519,7 +747,13 @@ def cart_view() -> dict[str, Any]:
 @mcp.tool()
 def cart_set_quantity(product_id: str, quantity: float) -> dict[str, Any]:
     """Задать количество товара в корзине. quantity=0 удаляет товар.
-    Для весовых товаров шаг задаётся полем basket_step в карточке."""
+    Для весовых товаров шаг задаётся полем basket_step в карточке.
+
+    Постфикс id подсказывает тип товара: "_KG" — весовой (шаг обычно дробный,
+    свой у каждого товара, не всегда круглый — например 0.35 кг), "_ST" —
+    поштучный/в упаковке (шаг почти всегда 1). Если API молча вернул прежнее
+    количество вместо запрошенного — значит quantity не кратно шагу.
+    """
     data = gc().post(
         "basket:update-products-quantity",
         {"products": [{"product_id": product_id, "quantity": quantity, "inscriptions": []}]},
