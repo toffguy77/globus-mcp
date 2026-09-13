@@ -152,6 +152,14 @@ class GlobusClient:
             payload = resp.json()
         except ValueError:
             raise GlobusError(f"HTTP {resp.status_code}: {resp.text[:300]}") from None
+        if isinstance(payload, dict) and self.token:
+            # Скользящее обновление сессии: BFF при каждом авторизованном запросе
+            # отдаёт свежий id_token (ещё на час вперёд), а не только по логину.
+            # Подхватываем его — иначе токен из auth_set_token тихо истекает
+            # через час даже при активном использовании сервера.
+            id_token = payload.get("id_token")
+            if isinstance(id_token, str) and id_token and id_token != self.token:
+                self.set_token(id_token)
         errors = payload.get("errors") if isinstance(payload, dict) else None
         if errors:
             msgs = "; ".join(

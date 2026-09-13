@@ -142,6 +142,23 @@ def test_non_json_response_raises():
         gc.get("basket")
 
 
+def test_id_token_in_response_rotates_stored_token():
+    """BFF отдаёт свежий id_token в каждом авторизованном ответе — сервер должен
+    его подхватывать, иначе токен из auth_set_token тихо истекает через час
+    даже при активном использовании."""
+    gc = make_client(lambda r: httpx.Response(200, json={"data": {"ok": 1}, "id_token": "new-jwt"}))
+    gc.set_token("old-jwt")
+    gc.get("context")
+    assert gc.token == "new-jwt"
+
+
+def test_id_token_ignored_when_anonymous():
+    """Без собственного токена ротация не запускается — нечего продлевать."""
+    gc = make_client(lambda r: httpx.Response(200, json={"data": {"ok": 1}, "id_token": "new-jwt"}))
+    gc.get("context")
+    assert gc.token is None
+
+
 # --------------------------------------------------------------------- ssr next
 
 
